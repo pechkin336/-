@@ -220,6 +220,7 @@
     warnings_log.csv; строгий режим (галочка в окне) — такие записи
     отбраковываются и попадают в error_log.csv.
 """
+from __future__ import annotations
 
 import argparse
 import atexit
@@ -245,8 +246,36 @@ from typing import Dict, List, Optional, Tuple
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+try:
+    import tkinter as tk
+    from tkinter import ttk, filedialog, messagebox
+    HAS_TKINTER = True
+except ImportError:
+    tk = None  # type: ignore[assignment]
+    ttk = filedialog = messagebox = None  # type: ignore[assignment]
+    HAS_TKINTER = False
+
+_TkCanvasBase = tk.Canvas if HAS_TKINTER else object
+_TkToplevelBase = tk.Toplevel if HAS_TKINTER else object
+_TkRootBase = tk.Tk if HAS_TKINTER else object
+
+from amirs.komi_courts import (  # noqa: E402
+    KOMI_DISTRICT_NAMES,
+    KOMI_JUDICIAL_DISTRICTS,
+    KOMI_SECTION_NAMES,
+    komi_district_of,
+    komi_match_section,
+    komi_normalize_section,
+    komi_section_count,
+    section_genitive,
+)
+from amirs.security import (  # noqa: E402
+    is_safe_archive_member,
+    redact_pii,
+    restrict_dir_permissions,
+    safe_xml_fromstring,
+    sanitize_csv_cell,
+)
 
 APP_VERSION = "3.8.2"
 DEFAULT_COURT_CODE = "11MS001"
@@ -344,114 +373,7 @@ XML_ILLEGAL = re.compile(
     "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ud800-\udfff\ufffe\uffff]"
 )
 
-# ---------------------------------------------------------------------------
-# Справочник судебных участков Республики Коми — 60 участков в 17 судебных
-# районах. По Закону Республики Коми от 08.06.2000 № 35-РЗ «О судебных
-# участках и должностях мировых судей в Республике Коми» (в актуальной
-# редакции, ст. 1 и приложение 1). Наименования — официальные, без
-# «Республики Коми» на конце: суффикс добавляется в документах.
-# ---------------------------------------------------------------------------
-
-KOMI_JUDICIAL_DISTRICTS = [
-    ("Сыктывкарский судебный район", [
-        "Димитровский судебный участок г. Сыктывкара",
-        "Катаевский судебный участок г. Сыктывкара",
-        "Краснозатонский судебный участок г. Сыктывкара",
-        "Куратовский судебный участок г. Сыктывкара",
-        "Кутузовский судебный участок г. Сыктывкара",
-        "Лесозаводский судебный участок г. Сыктывкара",
-        "Морозовский судебный участок г. Сыктывкара",
-        "Октябрьский судебный участок г. Сыктывкара",
-        "Первомайский судебный участок г. Сыктывкара",
-        "Петрозаводский судебный участок г. Сыктывкара",
-        "Пушкинский судебный участок г. Сыктывкара",
-        "Тентюковский судебный участок г. Сыктывкара",
-    ]),
-    ("Эжвинский судебный район", [
-        "Веждинский судебный участок Эжвинского района г. Сыктывкара",
-        "Магистральный судебный участок Эжвинского района г. Сыктывкара",
-        "Слободской судебный участок Эжвинского района г. Сыктывкара",
-        "Емвальский судебный участок Эжвинского района г. Сыктывкара",
-    ]),
-    ("Воркутинский судебный район", [
-        "Воргашорский судебный участок г. Воркуты",
-        "Горный судебный участок г. Воркуты",
-        "Горняцкий судебный участок г. Воркуты",
-        "Парковый судебный участок г. Воркуты",
-        "Северный судебный участок г. Воркуты",
-        "Тундровый судебный участок г. Воркуты",
-        "Шахтерский судебный участок г. Воркуты",
-    ]),
-    ("Вуктыльский судебный район", [
-        "Вуктыльский судебный участок",
-    ]),
-    ("Интинский судебный район", [
-        "Восточный судебный участок г. Инты",
-        "Западный судебный участок г. Инты",
-        "Центральный судебный участок г. Инты",
-    ]),
-    ("Печорский судебный район", [
-        "Привокзальный судебный участок г. Печоры",
-        "Речной судебный участок г. Печоры",
-        "Сосновоборский судебный участок г. Печоры",
-        "Юбилейный судебный участок г. Печоры",
-    ]),
-    ("Сосногорский судебный район", [
-        "Железнодорожный судебный участок г. Сосногорска",
-        "Промышленный судебный участок г. Сосногорска",
-        "Таежный судебный участок г. Сосногорска",
-        "Троицко-Печорский судебный участок",
-    ]),
-    ("Усинский судебный район", [
-        "Девонский судебный участок г. Усинска",
-        "Пармский судебный участок г. Усинска",
-        "Приполярный судебный участок г. Усинска",
-    ]),
-    ("Ухтинский судебный район", [
-        "Водненский судебный участок г. Ухты",
-        "Пионергорский судебный участок г. Ухты",
-        "Седьюский судебный участок г. Ухты",
-        "Тиманский судебный участок г. Ухты",
-        "Чибьюский судебный участок г. Ухты",
-        "Ярегский судебный участок г. Ухты",
-        "Университетский судебный участок г. Ухты",
-    ]),
-    ("Ижемский судебный район", [
-        "Ижемский судебный участок",
-        "Усть-Цилемский судебный участок",
-    ]),
-    ("Княжпогостский судебный район", [
-        "Емвинский судебный участок Княжпогостского района",
-        "Кылтовский судебный участок Княжпогостского района",
-    ]),
-    ("Корткеросский судебный район", [
-        "Корткеросский судебный участок",
-    ]),
-    ("Прилузский судебный район", [
-        "Прилузский судебный участок",
-    ]),
-    ("Сыктывдинский судебный район", [
-        "Выльгортский судебный участок",
-        "Зеленецкий судебный участок",
-    ]),
-    ("Сысольский судебный район", [
-        "Койгородский судебный участок",
-        "Сысольский судебный участок",
-    ]),
-    ("Усть-Вымский судебный район", [
-        "Айкинский судебный участок Усть-Вымского района",
-        "Жешартский судебный участок Усть-Вымского района",
-        "Удорский судебный участок",
-    ]),
-    ("Усть-Куломский судебный район", [
-        "Усть-Куломский судебный участок",
-        "Ульяновский судебный участок",
-    ]),
-]
-
-# Плоский список всех 60 участков (в порядке судебных районов).
-KOMI_SECTION_NAMES = [name for _, sites in KOMI_JUDICIAL_DISTRICTS for name in sites]
-KOMI_DISTRICT_NAMES = [district for district, _ in KOMI_JUDICIAL_DISTRICTS]
+# Справочник 60 судебных участков Республики Коми импортирован из amirs.komi_courts.
 
 SETTINGS_FILE_NAME = "amirs_settings.json"
 FEES_FILE_NAME = "amirs_fees.json"
@@ -486,71 +408,6 @@ def save_app_settings(payload: Dict[str, object]) -> None:
             json.dump(payload, fh, ensure_ascii=False, indent=2)
     except OSError:
         pass
-
-
-def komi_section_count() -> int:
-    """Общее число участков в справочнике (контроль: 60)."""
-    return len(KOMI_SECTION_NAMES)
-
-
-def komi_district_of(section_name: str) -> Optional[str]:
-    """Судебный район по наименованию участка (None, если не найдено)."""
-    want = komi_normalize_section(section_name)
-    for district, sites in KOMI_JUDICIAL_DISTRICTS:
-        for name in sites:
-            if komi_normalize_section(name) == want:
-                return district
-    return None
-
-
-def komi_match_section(text: str) -> Optional[str]:
-    """Находит в справочнике участок по неточному написанию.
-
-    Сравнение — без учёта регистра, пробелов и суффикса «Республики Коми».
-    Возвращает каноническое наименование либо None.
-    """
-    want = komi_normalize_section(text)
-    if not want:
-        return None
-    for name in KOMI_SECTION_NAMES:
-        if komi_normalize_section(name) == want:
-            return name
-    return None
-
-
-def komi_normalize_section(text: str) -> str:
-    """Нормализует наименование участка для сравнения."""
-    s = re.sub(r"\s+", " ", str(text or "")).strip().lower()
-    s = re.sub(r",?\s*республики коми\s*$", "", s)
-    return s
-
-
-def _genitive_word(word: str) -> str:
-    """Родительный падеж для прилагательного-слова наименования участка."""
-    for suf, rep in (("ский", "ского"), ("цкий", "цкого"),
-                     ("ый", "ого"), ("ой", "ого"), ("ая", "ой")):
-        if word.lower().endswith(suf):
-            return word[:-len(suf)] + rep
-    return word
-
-
-def section_genitive(name: str) -> str:
-    """«Димитровский судебный участок г. Сыктывкара» ->
-    «Димитровского судебного участка г. Сыктывкара».
-
-    Склоняются слова до «участок» включительно; «г. Сыктывкара» и другие
-    уже родительные формы после слова «участок» не меняются.
-    """
-    words = re.sub(r"\s+", " ", str(name or "")).strip().split(" ")
-    words = [w for w in words if w]
-    out: List[str] = []
-    for word in words:
-        if word.lower() == "участок":
-            out.append("участка")
-            break
-        out.append(_genitive_word(word))
-    rest = words[len(out):]
-    return " ".join(out + rest).strip()
 
 
 class ConversionError(Exception):
@@ -1170,8 +1027,8 @@ def _first_sheet_path(z: zipfile.ZipFile) -> Optional[str]:
     """Путь к первому видимому листу книги (не обязательно sheet1.xml)."""
     names = z.namelist()
     try:
-        workbook = ET.fromstring(z.read("xl/workbook.xml"))
-        rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+        workbook = safe_xml_fromstring(z.read("xl/workbook.xml"))
+        rels = safe_xml_fromstring(z.read("xl/_rels/workbook.xml.rels"))
     except (KeyError, ET.ParseError):
         return "xl/worksheets/sheet1.xml" if "xl/worksheets/sheet1.xml" in names else None
     rel_map = {
@@ -1205,14 +1062,14 @@ def read_xlsx_native(xlsx_path):
 
             shared_strings: List[str] = []
             if "xl/sharedStrings.xml" in z.namelist():
-                sst = ET.fromstring(z.read("xl/sharedStrings.xml"))
+                sst = safe_xml_fromstring(z.read("xl/sharedStrings.xml"))
                 for si in sst.findall(NS + "si"):
                     shared_strings.append(
                         "".join(t.text or "" for t in si.iter(NS + "t"))
                     )
 
             rows = []
-            sheet = ET.fromstring(z.read(sheet_path))
+            sheet = safe_xml_fromstring(z.read(sheet_path))
             prev_row_num = 0
             for row in sheet.iter(NS + "row"):
                 try:
@@ -1309,7 +1166,11 @@ def _write_csv_log(rows: List[Dict[str, str]], fieldnames: List[str], filename: 
     writer = csv.DictWriter(buffer, fieldnames=fieldnames,
                             delimiter=";", extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    safe_rows = [
+        {k: sanitize_csv_cell(v) for k, v in r.items()}
+        for r in rows
+    ]
+    writer.writerows(safe_rows)
     return _safe_write(
         buffer.getvalue().encode("utf-8-sig"),
         os.path.join(output_dir, filename),
@@ -3256,7 +3117,7 @@ def _docx_extract_text(path: str, tesseract_cfg: str = "") -> Tuple[str, str, st
             names = z.namelist()
             if "word/document.xml" not in names:
                 return "", "это не документ Word (.docx)", "fail"
-            root = ET.fromstring(z.read("word/document.xml"))
+            root = safe_xml_fromstring(z.read("word/document.xml"))
             for mname in sorted(names):
                 if mname.startswith("word/media/"):
                     ext = os.path.splitext(mname)[1].lower()
@@ -4681,11 +4542,12 @@ _log_lock = threading.Lock()
 def app_log(message: str) -> None:
     """Системный журнал работы программы: amirs_log.txt в защищенном профиле."""
     try:
+        safe_msg = redact_pii(message)
         with _log_lock:
             path = os.path.join(_protected_user_data_dir(), APP_LOG_NAME)
             size = os.path.getsize(path) if os.path.exists(path) else 0
             with open(path, "a" if size < 2_000_000 else "w", encoding="utf-8") as fh:
-                fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}\t{message}\n")
+                fh.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}\t{safe_msg}\n")
     except OSError:
         pass  # журнал не должен мешать основной работе
 
@@ -6798,7 +6660,7 @@ def _set_win_zoomed(win, zoomed: bool = True) -> None:
             pass
 
 
-class AppleButton(tk.Canvas):
+class AppleButton(_TkCanvasBase):
     """Современная скругленная кнопка в стиле Apple (macOS/iOS).
 
     Реагирует на нажатие левой кнопкой мыши в любой точке своей площади
@@ -7001,7 +6863,7 @@ class AppleButton(tk.Canvas):
         return super().cget(key)
 
 
-class ClaimEditDialog(tk.Toplevel):
+class ClaimEditDialog(_TkToplevelBase):
     """Карточка исправления заявки накопительного реестра.
 
     Незаполненные (или ошибочные) поля подсвечены красным — это подсказка,
@@ -7274,12 +7136,17 @@ class ClaimEditDialog(tk.Toplevel):
         self.destroy()
 
 
-class AmirsConverterApp(tk.Tk):
+class AmirsConverterApp(_TkRootBase):
     """Главное окно: 5 вкладок по ходу работы + нижняя строка состояния."""
 
     _EXPANDED_HEIGHT = 760  # высота окна при развёрнутых уточнениях экспресс-формы
 
     def __init__(self):
+        if not HAS_TKINTER:
+            raise RuntimeError(
+                "Графический интерфейс недоступен: не установлен модуль tkinter. "
+                "Используйте режим командной строки (--help)."
+            )
         super().__init__()
         self.title(f"Помощник мирового судьи — ПИ «АМИРС» | версия {APP_VERSION}")
         self.geometry("920x700")
@@ -7509,6 +7376,7 @@ class AmirsConverterApp(tk.Tk):
                                font=("Segoe UI", 10, "bold"), bg="#F5F5F7",
                                fg=self.PRIMARY_BLUE, relief="solid", bd=1)
         court_entry.grid(row=0, column=1, sticky="w", ipady=3)
+        court_entry.bind("<FocusOut>", lambda _e: self._save_window_state())
         ModernTooltip(court_entry,
                       "Код участка в классификаторе АМИРС (формат 11MS001)")
         self._field_label(grid, "Судья (ФИО)").grid(row=0, column=2, sticky="w",
@@ -7517,6 +7385,7 @@ class AmirsConverterApp(tk.Tk):
                                font=("Segoe UI", 10), bg="#F5F5F7",
                                fg=self.TEXT_DARK, relief="solid", bd=1)
         judge_entry.grid(row=0, column=3, sticky="we", ipady=3)
+        judge_entry.bind("<FocusOut>", lambda _e: self._save_window_state())
         ModernTooltip(judge_entry,
                       "Фамилия и инициалы судьи; пусто — будет линия для вписывания")
 
@@ -7537,6 +7406,7 @@ class AmirsConverterApp(tk.Tk):
             values=self._sections_of_district(self.district_var.get()),
             state="readonly", font=("Segoe UI", 9))
         self.section_cb.grid(row=1, column=3, sticky="we", ipady=2)
+        self.section_cb.bind("<<ComboboxSelected>>", lambda _e: self._save_window_state())
         ModernTooltip(self.section_cb,
                       "Официальное наименование участка (справочник 60 участков РК) — "
                       "попадёт в шапки приказов, определений и извещений.")
@@ -7564,10 +7434,11 @@ class AmirsConverterApp(tk.Tk):
             font=("Segoe UI", 9)
         )
         self.acting_section_cb.grid(row=2, column=3, sticky="we", ipady=2, pady=(4, 2))
+        self.acting_section_cb.bind("<<ComboboxSelected>>", lambda _e: self._save_window_state())
         ModernTooltip(
             self.acting_section_cb,
             "Основной судебный участок мирового судьи, на которого возложено "
-            "исполнение обязанностей (например: Куратовский судебный участок г. Сыктывкара)."
+            "исполнение обязанностей — выбор из всех 60 судебных участков РК."
         )
 
         tk.Label(body, text="Шаг 3 · обработка выбранного реестра:",

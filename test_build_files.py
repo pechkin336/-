@@ -126,6 +126,9 @@ class Builder(unittest.TestCase):
         self.addCleanup(shutil.rmtree, d, True)
         for f in need:
             shutil.copy2(os.path.join(HERE, f), d)
+        amirs_pkg = os.path.join(HERE, "amirs")
+        if os.path.isdir(amirs_pkg):
+            shutil.copytree(amirs_pkg, os.path.join(d, "amirs"))
         env = dict(os.environ, AMIRS_NO_PAUSE="1")
         if env.get("PYTHONPATH"):  # относительные пути (если заданы) делаем абсолютными
             env["PYTHONPATH"] = os.pathsep.join(os.path.abspath(os.path.join(HERE, p))
