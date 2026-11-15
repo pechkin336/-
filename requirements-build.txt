@@ -1,0 +1,13 @@
+# Закреплённые версии для воспроизводимой сборки.
+# Как заполнить: после первой УСПЕШНОЙ сборки откройте build_versions.txt (его создаёт
+# build_exe.py), скопируйте оттуда строки pyinstaller, paddlepaddle, paddleocr, pypdf,
+# pypdfium2, Pillow сюда и удалите этот комментарий. Пока файл без строк с пакетами —
+# ставятся последние версии, а фактические версии сборки записываются в build_versions.txt.
+#
+# Пример (версии подставьте свои, проверенные на вашей машине):
+# pyinstaller==X.Y.Z
+# paddlepaddle==X.Y.Z
+# paddleocr==X.Y.Z
+# pypdf==X.Y.Z
+# pypdfium2==X.Y.Z
+# Pillow==X.Y.Z
